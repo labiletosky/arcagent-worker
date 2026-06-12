@@ -1,0 +1,13 @@
+name = "arcagent-circle-proxy"
+main = "circle-worker.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+# Set these as secrets using: wrangler secret put CIRCLE_API_KEY
+
+# To deploy:
+# 1. npm install -g wrangler
+# 2. wrangler login
+# 3. wrangler secret put CIRCLE_API_KEY
+# 4. wrangler secret put ENTITY_SECRET
+# 5. wrangler deploy
