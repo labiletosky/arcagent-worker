@@ -5,13 +5,7 @@
 
 const CIRCLE_API_BASE = 'https://api.circle.com/v1/w3s'
 
-// Known funded wallets (add more as users onboard)
-const KNOWN_WALLETS = {
-  'labiletosky@gmail.com': {
-    address: '0xf85ec3287d65b41277f3e41f5fff485719d0c0a3',
-    walletId: 'eb552278-006d-5370-8822-d1449f71e333'
-  }
-}
+// Wallets stored in Cloudflare KV (persistent across restarts)
 
 function uuidv4() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
@@ -64,11 +58,13 @@ async function getPublicKey(apiKey) {
   return data?.data?.publicKey
 }
 
-function corsHeaders() {
+function corsHeaders(request) {
+  const origin = request ? request.headers.get('Origin') || '*' : '*'
   return {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Credentials': 'true',
     'Content-Type': 'application/json'
   }
 }
@@ -80,7 +76,7 @@ export default {
 
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: corsHeaders() })
+      return new Response(null, { headers: corsHeaders(request) })
     }
 
     const CIRCLE_API_KEY = env.CIRCLE_API_KEY
@@ -91,13 +87,16 @@ export default {
       // ── POST /circle/wallet ──────────────────────────────
       if (path === '/circle/wallet' && request.method === 'POST') {
         const { userId } = await request.json()
-        if (!userId) return Response.json({ error: 'userId required' }, { headers: corsHeaders() })
+        if (!userId) return Response.json({ error: 'userId required' }, { headers: corsHeaders(request) })
 
-        // Return cached wallet if known
-        if (KNOWN_WALLETS[userId]) {
+        // Check KV for existing wallet
+        const existing = await env.WALLETS.get(userId)
+        if (existing) {
+          const wallet = JSON.parse(existing)
+          console.log('[Circle] Returning existing wallet for:', userId)
           return Response.json(
-            { success: true, ...KNOWN_WALLETS[userId], userId },
-            { headers: corsHeaders() }
+            { success: true, ...wallet, userId },
+            { headers: corsHeaders(request) }
           )
         }
 
@@ -136,9 +135,13 @@ export default {
         const walletId = wData?.data?.wallets?.[0]?.id
         if (!address) throw new Error(wData?.message || 'Could not get wallet address')
 
+        // Save to KV for persistence
+        await env.WALLETS.put(userId, JSON.stringify({ address, walletId }))
+        console.log('[Circle] Wallet saved to KV for:', userId)
+
         return Response.json(
           { success: true, address, walletId, userId },
-          { headers: corsHeaders() }
+          { headers: corsHeaders(request) }
         )
       }
 
@@ -146,7 +149,7 @@ export default {
       if (path === '/circle/transaction' && request.method === 'POST') {
         const { walletId, contractAddress, callData, value } = await request.json()
         if (!walletId || !contractAddress) {
-          return Response.json({ error: 'walletId and contractAddress required' }, { headers: corsHeaders() })
+          return Response.json({ error: 'walletId and contractAddress required' }, { headers: corsHeaders(request) })
         }
 
         const publicKey = await getPublicKey(CIRCLE_API_KEY)
@@ -171,7 +174,7 @@ export default {
 
         return Response.json(
           { success: true, txId, state: txData?.data?.state },
-          { headers: corsHeaders() }
+          { headers: corsHeaders(request) }
         )
       }
 
@@ -184,7 +187,7 @@ export default {
         const txData = await txRes.json()
         return Response.json(
           { data: txData?.data?.transaction },
-          { headers: corsHeaders() }
+          { headers: corsHeaders(request) }
         )
       }
 
@@ -195,13 +198,13 @@ export default {
           headers: { 'Authorization': `Bearer ${CIRCLE_API_KEY}` }
         })
         const balData = await balRes.json()
-        return Response.json(balData, { headers: corsHeaders() })
+        return Response.json(balData, { headers: corsHeaders(request) })
       }
 
-      return Response.json({ error: 'Not found' }, { status: 404, headers: corsHeaders() })
+      return Response.json({ error: 'Not found' }, { status: 404, headers: corsHeaders(request) })
 
     } catch (e) {
-      return Response.json({ error: e.message }, { status: 500, headers: corsHeaders() })
+      return Response.json({ error: e.message }, { status: 500, headers: corsHeaders(request) })
     }
   }
 }
